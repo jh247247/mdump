@@ -229,6 +229,20 @@ impl TemplateProcessor {
     pub fn set_file_variables(&mut self, file_path: &Path, original_relative_path: &str) -> Result<()> {
         self.file_variables.clear();
         
+        // Get file metadata for creation/modification time
+        let metadata = std::fs::metadata(file_path)?;
+        
+        // Use the file's creation time, fall back to modified time if not available
+        let file_time = metadata.created().or_else(|_| metadata.modified())?;
+        let file_datetime: DateTime<Local> = file_time.into();
+        
+        // Override global time variables with file-specific ones
+        self.file_variables.insert("date".to_string(), file_datetime.format("%Y-%m-%d").to_string());
+        self.file_variables.insert("yyyy".to_string(), file_datetime.format("%Y").to_string());
+        self.file_variables.insert("mm".to_string(), file_datetime.format("%m").to_string());
+        self.file_variables.insert("dd".to_string(), file_datetime.format("%d").to_string());
+        self.file_variables.insert("time".to_string(), file_datetime.format("%H-%M-%S").to_string());
+        
         // File-specific variables
         let file_name = file_path
             .file_name()
