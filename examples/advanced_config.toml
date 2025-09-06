@@ -1,0 +1,66 @@
+# advanced_config.toml - Advanced host configuration example
+
+[destinations.work_photos]
+path = "work_projects"
+rclone_remote = "company_drive"
+name_template = "PROJECT_{media_name}_{yyyy}-{mm}-{dd}_{time}"
+
+[destinations.work_photos.processing]
+flatten_folders = false
+directory_structure = "projects/{yyyy}/Q{mm}/{media_name}"
+
+[destinations.personal_archive]
+path = "personal_backup"
+rclone_remote = "encrypted_backup"
+name_template = "{content_hash_short}_{original_name}"
+
+[destinations.personal_archive.processing]
+flatten_folders = false
+directory_structure = "{hostname}/{yyyy}/{mm}/{media_name}"
+
+[destinations.hash_storage]
+path = "hash_dedupe"
+rclone_remote = "dedup_storage"
+name_template = "{content_hash}.{ext}"
+
+[destinations.hash_storage.processing]
+flatten_folders = true
+directory_structure = "hashed/{content_hash_short}"
+
+# More remote examples
+[remotes.company_drive]
+type = "drive"
+scope = "drive"
+service_account_file = "/path/to/service-account.json"
+
+[remotes.encrypted_backup]
+type = "crypt"
+remote = "s3_backup:encrypted"
+password = "RCLONE_CONFIG_PASS"
+
+[remotes.dedup_storage]
+type = "s3"
+provider = "Wasabi"
+region = "us-east-1"
+endpoint = "s3.wasabisys.com"
+
+[remotes.s3_backup]
+type = "s3"
+provider = "AWS"
+region = "us-west-2"
+
+# High-performance settings
+[rclone]
+bandwidth_limit = "100M"
+transfers = 16
+additional_flags = [
+    "--progress",
+    "--checksum", 
+    "--fast-list",
+    "--use-mmap",
+    "--buffer-size=32M"
+]
+
+[security]
+verify_integrity = true
+require_confirmation_before_delete = true

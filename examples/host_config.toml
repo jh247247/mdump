@@ -1,0 +1,54 @@
+# host_config.toml - Host system configuration for mdump
+# Place this file at ~/.config/mdump/host_config.toml or specify with --config
+
+[destinations.photos]
+path = "imported_photos"
+rclone_remote = "gdrive_photos"
+name_template = "{media_name}_{date}_{content_hash_short}"
+
+[destinations.photos.processing]
+flatten_folders = false
+directory_structure = "{yyyy}/{mm}/{media_name}"
+
+[destinations.archive]
+path = "media_backups"
+rclone_remote = "s3_archive"
+name_template = "{content_hash}.{ext}"
+
+[destinations.archive.processing]
+flatten_folders = true
+directory_structure = "flattened/{yyyy}"
+
+[destinations.local_backup]
+path = "backups"
+rclone_remote = "local"
+name_template = "{original_name}"
+
+[destinations.local_backup.processing]
+flatten_folders = false
+directory_structure = "{media_name}/{original_path}"
+
+# Remote configurations
+[remotes.gdrive_photos]
+type = "drive"
+scope = "drive"
+
+[remotes.s3_archive]
+type = "s3"
+provider = "AWS"
+region = "us-west-2"
+# Note: access_key_id and secret_access_key will be prompted for interactively
+
+[remotes.local]
+type = "local"
+
+# Global rclone settings
+[rclone]
+bandwidth_limit = "20M"
+transfers = 8
+additional_flags = ["--progress", "--checksum"]
+
+# Security settings
+[security]
+verify_integrity = true
+require_confirmation_before_delete = true

@@ -1,0 +1,33 @@
+# mdump_source.toml - Configuration file for removable media
+# This file should be placed in the root of your removable media device
+
+[source]
+name = "Family_Photos_2024"
+description = "Summer vacation and family events"
+
+# Directories and files to backup from this media
+paths = [
+    "DCIM/Camera/",
+    "Documents/Scanned/",
+    "Videos/Personal/"
+]
+
+# File patterns to include (empty means include all)
+file_filters = [
+    "*.jpg",
+    "*.jpeg", 
+    "*.png",
+    "*.raw",
+    "*.mp4",
+    "*.mov",
+    "*.pdf",
+    "*.docx"
+]
+
+# Patterns to exclude
+exclude_patterns = [
+    ".DS_Store",
+    "Thumbs.db",
+    "*.tmp",
+    "._*"
+]
