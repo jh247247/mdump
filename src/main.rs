@@ -39,6 +39,9 @@ enum Commands {
         /// Specific destination to filter by
         #[arg(long, short = 'd')]
         destination: Option<String>,
+        /// Force delete all importable files based on config, not just logged files
+        #[arg(long, short = 'f')]
+        force: bool,
     },
     /// Manage rclone remotes
     Remotes {
@@ -78,8 +81,8 @@ async fn main() -> Result<()> {
         Commands::Backup { destination } => {
             run_backup(host_config, destination, cli.dry_run, cli.verbose, cli.auto).await?;
         }
-        Commands::Delete { destination } => {
-            run_delete(host_config, destination, cli.auto).await?;
+        Commands::Delete { destination, force } => {
+            run_delete(host_config, destination, force, cli.auto).await?;
         }
         Commands::Remotes { action } => {
             run_remotes_command(host_config, action).await?;
@@ -226,6 +229,7 @@ async fn run_backup(
 async fn run_delete(
     host_config: HostConfig,
     destination: Option<String>,
+    force: bool,
     auto: bool,
 ) -> Result<()> {
     println!("🔍 Scanning for removable media...");
@@ -263,12 +267,20 @@ async fn run_delete(
     let file_processor = mdump::FileProcessor::new(&host_config, false);
     
     println!("🚀 Starting deletion process...");
-    let success = file_processor.delete_backed_up_files(
-        selected_media, 
-        &host_config, 
-        destination.as_deref(),
-        auto
-    ).await?;
+    let success = if force {
+        file_processor.delete_importable_files(
+            selected_media, 
+            &host_config, 
+            auto
+        ).await?
+    } else {
+        file_processor.delete_backed_up_files(
+            selected_media, 
+            &host_config, 
+            destination.as_deref(),
+            auto
+        ).await?
+    };
     
     if success {
         println!("✅ Deletion process completed!");

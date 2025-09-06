@@ -843,6 +843,158 @@ impl FileProcessor {
             Ok(false)
         }
     }
+
+    pub async fn delete_importable_files(
+        &self,
+        media: &DetectedMedia,
+        host_config: &HostConfig,
+        auto_mode: bool,
+    ) -> Result<bool> {
+        // Check if deletion is configured for this media
+        let deletion_config = match &media.config.source.deletion {
+            Some(config) => config,
+            None => {
+                println!("ℹ️  No deletion configuration found for media: {}", media.name);
+                return Ok(true);
+            }
+        };
+
+        if !deletion_config.delete_imported_files {
+            println!("ℹ️  File deletion disabled for media: {}", media.name);
+            return Ok(true);
+        }
+
+        println!("⚠️  FORCE MODE: Will delete files based on media configuration, not backup logs");
+        
+        // Collect all files that would be imported based on media configuration
+        let importable_files = self.collect_files_to_process(media)?;
+        
+        if importable_files.is_empty() {
+            println!("ℹ️  No importable files found to delete");
+            return Ok(true);
+        }
+
+        let security_config = host_config.security.as_ref();
+        let require_confirmation = !auto_mode && security_config
+            .map(|s| s.require_confirmation_before_delete)
+            .unwrap_or(true);
+
+        if require_confirmation {
+            println!("\n🚨 FORCE DELETE CONFIRMATION REQUIRED 🚨");
+            println!("⚠️  WARNING: This will delete ALL files that match the media configuration!");
+            println!("⚠️  This does NOT verify that files have been backed up!");
+            println!();
+            println!("Media: {}", media.name);
+            println!("Mount path: {}", media.mount_path.display());
+            println!("File filters: {:?}", media.config.source.file_filters);
+            if !media.config.source.exclude_patterns.is_empty() {
+                println!("Exclude patterns: {:?}", media.config.source.exclude_patterns);
+            }
+            println!();
+            println!("Will delete {} files that match the configuration:", importable_files.len());
+            
+            for (i, file_path) in importable_files.iter().enumerate().take(10) {
+                let relative_path = file_path
+                    .strip_prefix(&media.mount_path)
+                    .unwrap_or(file_path)
+                    .display();
+                println!("  {}. {}", i + 1, relative_path);
+            }
+            
+            if importable_files.len() > 10 {
+                println!("  ... and {} more files", importable_files.len() - 10);
+            }
+            
+            println!();
+            println!("🚨 THIS ACTION CANNOT BE UNDONE! 🚨");
+            println!("🚨 FILES WILL BE DELETED WITHOUT BACKUP VERIFICATION! 🚨");
+            println!();
+            
+            // First confirmation
+            let first_confirm = Confirm::new()
+                .with_prompt("Do you understand this will delete files WITHOUT verifying backups exist?")
+                .default(false)
+                .interact()?;
+            
+            if !first_confirm {
+                println!("🛑 Force deletion cancelled by user");
+                return Ok(false);
+            }
+
+            // Second confirmation with exact count
+            let second_confirm = Confirm::new()
+                .with_prompt(&format!("Are you absolutely sure you want to permanently delete these {} files?", importable_files.len()))
+                .default(false)
+                .interact()?;
+            
+            if !second_confirm {
+                println!("🛑 Force deletion cancelled by user");
+                return Ok(false);
+            }
+
+            // Final confirmation with typing requirement
+            println!();
+            println!("Final confirmation: Type 'DELETE {} FILES' to proceed:", importable_files.len());
+            let required_text = format!("DELETE {} FILES", importable_files.len());
+            let input: String = dialoguer::Input::new()
+                .with_prompt("Enter confirmation text")
+                .interact_text()?;
+            
+            if input != required_text {
+                println!("🛑 Confirmation text does not match. Force deletion cancelled.");
+                return Ok(false);
+            }
+        } else {
+            println!("⚠️  Auto mode enabled - skipping confirmation for force delete of {} files", importable_files.len());
+        }
+
+        println!("🗑️  Force deleting importable files...");
+        let mut deleted_count = 0;
+        let mut failed_count = 0;
+
+        for file_path in &importable_files {
+            if file_path.exists() {
+                match tokio::fs::remove_file(file_path).await {
+                    Ok(_) => {
+                        deleted_count += 1;
+                        let relative_path = file_path
+                            .strip_prefix(&media.mount_path)
+                            .unwrap_or(file_path)
+                            .display();
+                        println!("🗑️  Force deleted: {}", relative_path);
+                    }
+                    Err(e) => {
+                        failed_count += 1;
+                        println!("❌ Failed to delete {}: {}", file_path.display(), e);
+                    }
+                }
+            }
+        }
+
+        // Also delete extra files if configured
+        if !deletion_config.extra_file_patterns.is_empty() {
+            for path_str in &media.config.source.paths {
+                let full_path = media.mount_path.join(path_str);
+                if full_path.exists() && full_path.is_dir() {
+                    match self.delete_extra_files(&full_path, &deletion_config.extra_file_patterns).await {
+                        Ok(extra_deleted) => deleted_count += extra_deleted,
+                        Err(e) => {
+                            println!("❌ Failed to delete extra files in {}: {}", full_path.display(), e);
+                            failed_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        if failed_count == 0 {
+            println!("✅ Successfully force deleted {} files", deleted_count);
+            Ok(true)
+        } else {
+            println!("⚠️  Force deleted {} files, {} failed", deleted_count, failed_count);
+            Ok(false)
+        }
+    }
 }
 
 #[cfg(test)]
