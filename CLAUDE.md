@@ -132,10 +132,11 @@ timeout_seconds = 5
 ### File Processing Pipeline
 1. **Media Detection**: Scan for removable drives with mdump config
 2. **File Collection**: Recursive scan with filter/exclude patterns
-3. **Template Processing**: Generate destination paths using variables
-4. **Symbolic Link Strategy**: Create temp directory structure, bulk copy
-5. **Backup Logging**: Record successful transfers for future deletion
-6. **Optional Deletion**: Based on logs or force mode
+3. **Media Validation**: File-type-specific validation (ffprobe, custom commands)
+4. **Template Processing**: Generate destination paths using variables
+5. **Symbolic Link Strategy**: Create temp directory structure, bulk copy
+6. **Backup Logging**: Record successful transfers for future deletion
+7. **Optional Deletion**: Based on logs or force mode
 
 ### Template Variables
 - **Global**: `{media_name}`, `{hostname}`, `{uuid}`, `{content_hash}`
@@ -280,6 +281,104 @@ delete_imported_files = true
 extra_file_patterns = []
 ```
 
+## Advanced Validation System Details
+
+The file-type-specific validation system provides comprehensive media integrity checking with targeted approaches for different file types.
+
+### Validation Architecture
+
+**Pattern-Based Routing**:
+- Files are matched against `file_patterns` arrays using glob-style patterns
+- Case-insensitive matching ensures cross-platform compatibility
+- Multiple validators can target the same file types
+- Empty patterns match all files (universal validators)
+
+**Validation Execution**:
+- FFprobe validation runs only on video files matching configured patterns
+- Custom commands execute based on their specific file patterns
+- Validation results include timing, error messages, and metadata
+- Failed validations can skip files or abort the entire operation
+
+**Performance Optimizations**:
+- Only relevant validators execute per file type
+- Parallel validation with configurable timeouts
+- Pattern pre-filtering reduces unnecessary validation attempts
+- Validation metadata preserved for analysis and debugging
+
+### Real-World Validation Scenarios
+
+**Photography Workflow**:
+```toml
+# RAW image validation with dcraw
+[[source.validation.custom_commands]]
+name = "raw_validation"
+command = "dcraw"
+args = ["-i", "{file_path}"]
+file_patterns = ["*.cr2", "*.nef", "*.arw", "*.dng"]
+expected_exit_code = 0
+
+# JPEG validation with ImageMagick
+[[source.validation.custom_commands]]  
+name = "jpeg_validation"
+command = "identify"
+args = ["-ping", "{file_path}"]
+file_patterns = ["*.jpg", "*.jpeg"]
+expected_exit_code = 0
+```
+
+**Video Production**:
+```toml
+# Professional video formats
+[source.validation.ffprobe_validation]
+file_patterns = ["*.mov", "*.mp4", "*.mxf", "*.r3d"]
+required_streams = ["video"]
+min_duration_seconds = 0.1
+check_corruption = true
+
+# Audio validation for sound files
+[[source.validation.custom_commands]]
+name = "audio_validation" 
+command = "ffprobe"
+args = ["-v", "quiet", "-show_streams", "{file_path}"]
+file_patterns = ["*.wav", "*.aiff", "*.mp3"]
+expected_exit_code = 0
+```
+
+**Document Archives**:
+```toml
+# PDF validation
+[[source.validation.custom_commands]]
+name = "pdf_validation"
+command = "pdfinfo"
+args = ["{file_path}"]
+file_patterns = ["*.pdf"]
+expected_exit_code = 0
+
+# Office document validation
+[[source.validation.custom_commands]]
+name = "office_validation"
+command = "file"
+args = ["-b", "{file_path}"]
+file_patterns = ["*.docx", "*.xlsx", "*.pptx"]
+expected_exit_code = 0
+```
+
+### Validation Result Analysis
+
+**Console Output**:
+```
+🔍 Validating 25 files...
+🔍 Validating video.mp4... ✅ Valid
+🔍 Validating photo.jpg... ✅ Valid  
+🔍 Validating document.pdf... ❌ Invalid (pdf_validation: PDF is corrupted)
+📊 23 files passed validation (2 invalid files filtered out)
+```
+
+**Programmatic Access**:
+- `ProcessingResult.validation_results`: HashMap of file paths to validation results
+- `ProcessingResult.invalid_files`: List of files that failed validation
+- Individual `ValidationResult` includes validator name, timing, and error details
+
 ## Lessons Learned
 
 1. **Separation of Concerns**: Backup and deletion should be independent operations for reliability
@@ -289,5 +388,6 @@ extra_file_patterns = []
 5. **Error Recovery**: Graceful fallbacks and clear error messages improve user experience
 6. **Test Coverage**: Comprehensive testing catches regressions during refactoring
 7. **Code Quality**: Regular linting and formatting maintains professional standards
+8. **Type-Specific Validation**: Different file types require different validation approaches for accuracy
 
 This documentation should enable future development sessions to quickly understand the architecture, solutions implemented, and best practices established during this development cycle.
