@@ -1,7 +1,7 @@
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::Result;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MediaConfig {
@@ -16,12 +16,41 @@ pub struct MediaSource {
     pub file_filters: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub deletion: Option<DeletionConfig>,
+    pub validation: Option<ValidationConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DeletionConfig {
     pub delete_imported_files: bool,
     pub extra_file_patterns: Vec<String>, // Glob patterns for extra files to delete
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ValidationConfig {
+    pub enabled: bool,
+    pub ffprobe_validation: Option<FfprobeConfig>,
+    pub custom_commands: Vec<CustomValidationCommand>,
+    pub skip_on_validation_failure: bool, // If true, skip invalid files; if false, fail the entire operation
+    pub max_validation_time_seconds: Option<u64>, // Timeout for validation commands
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FfprobeConfig {
+    pub enabled: bool,
+    pub ffprobe_path: Option<String>, // Path to ffprobe binary, defaults to "ffprobe"
+    pub required_streams: Vec<String>, // e.g., ["video", "audio"] or ["video"]
+    pub min_duration_seconds: Option<f64>, // Minimum duration for valid media
+    pub max_duration_seconds: Option<f64>, // Maximum duration for valid media
+    pub check_corruption: bool, // Run deeper corruption checks
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CustomValidationCommand {
+    pub name: String,
+    pub command: String, // Command to execute, with {file_path} placeholder
+    pub args: Vec<String>, // Additional arguments, can contain {file_path} placeholder
+    pub expected_exit_code: i32, // Expected exit code for success (usually 0)
+    pub timeout_seconds: Option<u64>, // Per-command timeout
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -98,17 +127,17 @@ impl HostConfig {
         let config: HostConfig = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
-    
+
     pub fn get_destination(&self, name: &str) -> Option<&Destination> {
         self.destinations.get(name)
     }
-    
+
     pub fn list_destinations(&self) -> Vec<&String> {
         self.destinations.keys().collect()
     }
@@ -136,25 +165,15 @@ impl Default for SecurityConfig {
 impl Default for HashCollisionConfig {
     fn default() -> Self {
         Self {
-            initial_read_size: Some(1024 * 1024), // 1MB
+            initial_read_size: Some(1024 * 1024),  // 1MB
             max_read_size: Some(16 * 1024 * 1024), // 16MB
-            collision_multiplier: Some(2.0), // Double the read size on collision
+            collision_multiplier: Some(2.0),       // Double the read size on collision
             enable_progressive_hashing: true,
         }
     }
 }
 
-impl Default for RcloneConfig {
-    fn default() -> Self {
-        Self {
-            rclone_config_path: None,
-            rclone_binary_path: None,
-            rclone_options: HashMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct RcloneConfig {
     pub rclone_config_path: Option<String>,
     pub rclone_binary_path: Option<String>,
@@ -190,15 +209,18 @@ mod tests {
         let config_path = temp_dir.path().join("test_config.toml");
 
         let mut destinations = HashMap::new();
-        destinations.insert("test_dest".to_string(), Destination {
-            path: "/backup/path".to_string(),
-            rclone_remote: "remote:bucket".to_string(),
-            name_template: "{media_name}_{date}".to_string(),
-            processing: ProcessingConfig {
-                flatten_folders: true,
-                directory_structure: "{yyyy}/{mm}".to_string(),
+        destinations.insert(
+            "test_dest".to_string(),
+            Destination {
+                path: "/backup/path".to_string(),
+                rclone_remote: "remote:bucket".to_string(),
+                name_template: "{media_name}_{date}".to_string(),
+                processing: ProcessingConfig {
+                    flatten_folders: true,
+                    directory_structure: "{yyyy}/{mm}".to_string(),
+                },
             },
-        });
+        );
 
         let original_config = HostConfig {
             destinations,
@@ -218,7 +240,7 @@ mod tests {
         // Verify the loaded config matches
         assert_eq!(loaded_config.destinations.len(), 1);
         assert!(loaded_config.destinations.contains_key("test_dest"));
-        
+
         let dest = loaded_config.get_destination("test_dest").unwrap();
         assert_eq!(dest.path, "/backup/path");
         assert_eq!(dest.rclone_remote, "remote:bucket");
@@ -269,18 +291,24 @@ extra_file_patterns = ["*.log"]
     #[test]
     fn test_host_config_destination_management() {
         let mut destinations = HashMap::new();
-        destinations.insert("dest1".to_string(), Destination {
-            path: "/path1".to_string(),
-            rclone_remote: "remote1:".to_string(),
-            name_template: "{original_name}".to_string(),
-            processing: ProcessingConfig::default(),
-        });
-        destinations.insert("dest2".to_string(), Destination {
-            path: "/path2".to_string(),
-            rclone_remote: "remote2:".to_string(),
-            name_template: "{media_name}_{original_name}".to_string(),
-            processing: ProcessingConfig::default(),
-        });
+        destinations.insert(
+            "dest1".to_string(),
+            Destination {
+                path: "/path1".to_string(),
+                rclone_remote: "remote1:".to_string(),
+                name_template: "{original_name}".to_string(),
+                processing: ProcessingConfig::default(),
+            },
+        );
+        destinations.insert(
+            "dest2".to_string(),
+            Destination {
+                path: "/path2".to_string(),
+                rclone_remote: "remote2:".to_string(),
+                name_template: "{media_name}_{original_name}".to_string(),
+                processing: ProcessingConfig::default(),
+            },
+        );
 
         let config = HostConfig {
             destinations,
