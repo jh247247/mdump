@@ -38,27 +38,48 @@ enabled = true
 skip_on_validation_failure = true
 max_validation_time_seconds = 30
 
-# FFprobe validation for media files
+# FFprobe validation for video files
 [source.validation.ffprobe_validation]
 enabled = true
 # ffprobe_path = "/usr/local/bin/ffprobe"  # Optional: custom ffprobe path
+file_patterns = ["*.mp4", "*.mov", "*.avi", "*.mkv", "*.wmv"]  # Video file patterns
 required_streams = ["video"]              # Require video stream
 min_duration_seconds = 1.0                # Minimum 1 second duration
 # max_duration_seconds = 3600.0          # Optional: maximum duration
 check_corruption = false                  # Enable deep corruption checks
 
-# Custom validation commands
+# Validate that all files are readable
 [[source.validation.custom_commands]]
 name = "file_readable"
 command = "test"
 args = ["-r", "{file_path}"]
+file_patterns = ["*"]                     # Apply to all files
 expected_exit_code = 0
 timeout_seconds = 5
 
-# Example: Validate video files with mediainfo
+# Validate image files with ImageMagick identify
+[[source.validation.custom_commands]]
+name = "image_validation"
+command = "identify"
+args = ["{file_path}"]
+file_patterns = ["*.jpg", "*.jpeg", "*.png", "*.tiff", "*.gif"]  # Image file patterns
+expected_exit_code = 0
+timeout_seconds = 10
+
+# Validate video files with mediainfo (alternative to ffprobe)
 # [[source.validation.custom_commands]]
 # name = "mediainfo_check"
 # command = "mediainfo"
 # args = ["--Output=JSON", "{file_path}"]
+# file_patterns = ["*.mp4", "*.mov", "*.avi"]
 # expected_exit_code = 0
-# timeout_seconds = 10
+# timeout_seconds = 15
+
+# Validate PDF files
+# [[source.validation.custom_commands]]
+# name = "pdf_validation"  
+# command = "pdfinfo"
+# args = ["{file_path}"]
+# file_patterns = ["*.pdf"]
+# expected_exit_code = 0
+# timeout_seconds = 5

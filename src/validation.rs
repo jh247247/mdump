@@ -24,6 +24,34 @@ impl MediaValidator {
         Self { config }
     }
 
+    fn file_matches_patterns(file_path: &Path, patterns: &[String]) -> bool {
+        if patterns.is_empty() {
+            return true; // No patterns means match all files
+        }
+
+        let file_name = file_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+
+        patterns.iter().any(|pattern| {
+            // Convert glob pattern to regex-like matching
+            let pattern = pattern.replace("*", ".*").to_lowercase();
+            let file_name_lower = file_name.to_lowercase();
+            
+            // Simple pattern matching - could use a proper glob library
+            if pattern.starts_with("*.") {
+                let extension = &pattern[2..];
+                file_name_lower.ends_with(&format!(".{}", extension))
+            } else {
+                // Use regex for more complex patterns
+                match regex::Regex::new(&pattern) {
+                    Ok(re) => re.is_match(&file_name_lower),
+                    Err(_) => false,
+                }
+            }
+        })
+    }
+
     pub async fn validate_file(&self, file_path: &Path) -> Result<Vec<ValidationResult>> {
         if !self.config.enabled {
             return Ok(vec![ValidationResult {
@@ -37,18 +65,20 @@ impl MediaValidator {
 
         let mut results = Vec::new();
         
-        // Run ffprobe validation if configured
+        // Run ffprobe validation if configured and file matches patterns
         if let Some(ffprobe_config) = &self.config.ffprobe_validation {
-            if ffprobe_config.enabled {
+            if ffprobe_config.enabled && Self::file_matches_patterns(file_path, &ffprobe_config.file_patterns) {
                 let result = self.validate_with_ffprobe(file_path, ffprobe_config).await?;
                 results.push(result);
             }
         }
 
-        // Run custom validation commands
+        // Run custom validation commands for matching file patterns
         for custom_command in &self.config.custom_commands {
-            let result = self.validate_with_custom_command(file_path, custom_command).await?;
-            results.push(result);
+            if Self::file_matches_patterns(file_path, &custom_command.file_patterns) {
+                let result = self.validate_with_custom_command(file_path, custom_command).await?;
+                results.push(result);
+            }
         }
 
         Ok(results)
@@ -265,6 +295,7 @@ mod tests {
             ffprobe_validation: Some(FfprobeConfig {
                 enabled: true,
                 ffprobe_path: None,
+                file_patterns: vec!["*.mp4".to_string(), "*.mov".to_string()],
                 required_streams: vec!["video".to_string()],
                 min_duration_seconds: Some(1.0),
                 max_duration_seconds: Some(3600.0),
@@ -275,6 +306,7 @@ mod tests {
                     name: "file_exists".to_string(),
                     command: "test".to_string(),
                     args: vec!["-f".to_string(), "{file_path}".to_string()],
+                    file_patterns: vec!["*".to_string()], // Match all files
                     expected_exit_code: 0,
                     timeout_seconds: Some(5),
                 }
@@ -315,6 +347,7 @@ mod tests {
             name: "test".to_string(),
             command: "echo".to_string(),
             args: vec!["File is: {file_path}".to_string(), "End".to_string()],
+            file_patterns: vec!["*.mp4".to_string()],
             expected_exit_code: 0,
             timeout_seconds: None,
         };
@@ -327,5 +360,32 @@ mod tests {
 
         assert_eq!(processed_args[0], "File is: /test/path/file.mp4");
         assert_eq!(processed_args[1], "End");
+    }
+
+    #[test]
+    fn test_file_pattern_matching() {
+        // Test video file patterns
+        let video_patterns = vec!["*.mp4".to_string(), "*.mov".to_string(), "*.avi".to_string()];
+        
+        assert!(MediaValidator::file_matches_patterns(Path::new("video.mp4"), &video_patterns));
+        assert!(MediaValidator::file_matches_patterns(Path::new("VIDEO.MP4"), &video_patterns)); // Case insensitive
+        assert!(MediaValidator::file_matches_patterns(Path::new("family_vacation.mov"), &video_patterns));
+        assert!(!MediaValidator::file_matches_patterns(Path::new("photo.jpg"), &video_patterns));
+
+        // Test image file patterns
+        let image_patterns = vec!["*.jpg".to_string(), "*.jpeg".to_string(), "*.png".to_string()];
+        
+        assert!(MediaValidator::file_matches_patterns(Path::new("photo.jpg"), &image_patterns));
+        assert!(MediaValidator::file_matches_patterns(Path::new("PHOTO.JPG"), &image_patterns));
+        assert!(MediaValidator::file_matches_patterns(Path::new("screenshot.png"), &image_patterns));
+        assert!(!MediaValidator::file_matches_patterns(Path::new("video.mp4"), &image_patterns));
+
+        // Test empty patterns (should match all)
+        let empty_patterns = vec![];
+        assert!(MediaValidator::file_matches_patterns(Path::new("any_file.xyz"), &empty_patterns));
+
+        // Test wildcard pattern
+        let all_patterns = vec!["*".to_string()];
+        assert!(MediaValidator::file_matches_patterns(Path::new("any_file.xyz"), &all_patterns));
     }
 }

@@ -70,11 +70,13 @@ mdump --auto delete --force            # Automated (skips confirmation)
 
 **Features**:
 - **FFprobe Integration**: Validates video/audio files using ffprobe
+  - File-type-specific patterns (`["*.mp4", "*.mov", "*.avi"]`)
   - Required stream validation (video, audio)
   - Duration constraints (min/max)
   - Corruption detection
   - Custom ffprobe binary paths
 - **Custom Commands**: Execute arbitrary validation commands
+  - File-type-specific patterns for targeted validation
   - Placeholder substitution (`{file_path}`)
   - Expected exit codes
   - Per-command timeouts
@@ -88,17 +90,31 @@ enabled = true
 skip_on_validation_failure = true
 max_validation_time_seconds = 30
 
+# FFprobe for video files only
 [source.validation.ffprobe_validation]
 enabled = true
+file_patterns = ["*.mp4", "*.mov", "*.avi", "*.mkv"]
 required_streams = ["video"]
 min_duration_seconds = 1.0
 check_corruption = false
 
+# Image validation with ImageMagick
 [[source.validation.custom_commands]]
-name = "file_readable"
-command = "test"
-args = ["-r", "{file_path}"]
+name = "image_validation"
+command = "identify"
+args = ["{file_path}"]
+file_patterns = ["*.jpg", "*.jpeg", "*.png", "*.tiff"]
 expected_exit_code = 0
+timeout_seconds = 10
+
+# PDF validation
+[[source.validation.custom_commands]]
+name = "pdf_validation"
+command = "pdfinfo"
+args = ["{file_path}"]
+file_patterns = ["*.pdf"]
+expected_exit_code = 0
+timeout_seconds = 5
 ```
 
 **Key Files**:

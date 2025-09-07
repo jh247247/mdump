@@ -38,6 +38,7 @@ pub struct ValidationConfig {
 pub struct FfprobeConfig {
     pub enabled: bool,
     pub ffprobe_path: Option<String>, // Path to ffprobe binary, defaults to "ffprobe"
+    pub file_patterns: Vec<String>, // File patterns to validate, e.g., ["*.mp4", "*.mov", "*.avi"]
     pub required_streams: Vec<String>, // e.g., ["video", "audio"] or ["video"]
     pub min_duration_seconds: Option<f64>, // Minimum duration for valid media
     pub max_duration_seconds: Option<f64>, // Maximum duration for valid media
@@ -49,6 +50,7 @@ pub struct CustomValidationCommand {
     pub name: String,
     pub command: String, // Command to execute, with {file_path} placeholder
     pub args: Vec<String>, // Additional arguments, can contain {file_path} placeholder
+    pub file_patterns: Vec<String>, // File patterns to validate, e.g., ["*.jpg", "*.png"] 
     pub expected_exit_code: i32, // Expected exit code for success (usually 0)
     pub timeout_seconds: Option<u64>, // Per-command timeout
 }
