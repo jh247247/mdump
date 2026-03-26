@@ -1,4 +1,5 @@
 use crate::config::{Destination, DetectedMedia, HostConfig};
+use crate::hooks::HookExecutor;
 use crate::rclone::RcloneWrapper;
 use crate::templates::TemplateProcessor;
 use crate::validation::{MediaValidator, ValidationResult};
@@ -219,8 +220,6 @@ impl FileProcessor {
             .process_files(
                 &file_mappings,
                 destination,
-                &template_processor,
-                host_config,
             )
             .await?;
 
@@ -232,6 +231,26 @@ impl FileProcessor {
         if result.files_processed > 0 && !result.successfully_imported_files.is_empty() {
             if let Err(e) = self.save_backup_log(media, &destination.path, &file_mappings) {
                 println!("⚠️  Warning: Could not save backup log: {}", e);
+            }
+        }
+
+        // Execute post-processing hooks if configured
+        if let Some(post_processing_config) = &media.config.source.post_processing {
+            let hook_executor = HookExecutor::new(template_processor);
+            match hook_executor.execute_post_processing_hooks(
+                post_processing_config,
+                media,
+                &result,
+                &destination.path,
+            ).await {
+                Ok(hook_summary) => {
+                    if hook_summary.failed_hooks > 0 {
+                        println!("⚠️  Some post-processing hooks failed, but backup was successful");
+                    }
+                }
+                Err(e) => {
+                    println!("⚠️  Error executing post-processing hooks: {}", e);
+                }
             }
         }
 
@@ -296,13 +315,7 @@ impl FileProcessor {
     }
 
     fn matches_glob_pattern(&self, file_name: &str, pattern: &str) -> Result<bool> {
-        let regex_pattern = pattern
-            .replace(".", r"\.")
-            .replace("*", ".*")
-            .replace("?", ".");
-
-        let regex = regex::Regex::new(&format!("^{}$", regex_pattern))?;
-        Ok(regex.is_match(file_name))
+        crate::media::glob_pattern_matches(file_name, pattern)
     }
 
     pub fn create_file_mappings(
@@ -314,7 +327,6 @@ impl FileProcessor {
     ) -> Result<Vec<FileMapping>> {
         let mut mappings = Vec::new();
         let mut used_filenames = std::collections::HashMap::new();
-        let _base_dest_path = template_processor.process_template(&destination.name_template)?;
 
         for file_path in files {
             let relative_path = file_path
@@ -442,8 +454,6 @@ impl FileProcessor {
         &self,
         file_mappings: &[FileMapping],
         destination: &Destination,
-        _template_processor: &TemplateProcessor,
-        _host_config: &HostConfig,
     ) -> Result<ProcessingResult> {
         let mut result = ProcessingResult {
             files_processed: 0,
@@ -1254,6 +1264,7 @@ mod tests {
                 exclude_patterns: vec!["*.bak".to_string()],
                 deletion: None,
                 validation: None,
+                post_processing: None,
             },
         };
 

@@ -1,5 +1,8 @@
 # Rust
 /target/
+
+# Claude Code
+.claude/
 **/*.rs.bk
 Cargo.lock
 

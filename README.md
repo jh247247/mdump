@@ -23,8 +23,8 @@ A Rust CLI tool that provides automated backup of removable media using rclone, 
 ### Build from Source
 
 ```bash
-git clone <repository-url>
-cd mdump2
+git clone https://github.com/jh247247/mdump.git
+cd mdump
 cargo build --release
 ```
 

@@ -17,10 +17,6 @@ struct Cli {
     #[arg(long)]
     dry_run: bool,
 
-    /// Verbose output
-    #[arg(long, short = 'v')]
-    verbose: bool,
-
     /// Auto mode - skip interactive prompts
     #[arg(long)]
     auto: bool,
@@ -79,7 +75,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Backup { destination } => {
-            run_backup(host_config, destination, cli.dry_run, cli.verbose, cli.auto).await?;
+            run_backup(host_config, destination, cli.dry_run, cli.auto).await?;
         }
         Commands::Delete { destination, force } => {
             run_delete(host_config, destination, force, cli.auto).await?;
@@ -96,7 +92,6 @@ async fn run_backup(
     host_config: HostConfig,
     destination: Option<String>,
     dry_run: bool,
-    _verbose: bool,
     auto: bool,
 ) -> Result<()> {
     println!("🔍 Scanning for removable media...");
@@ -170,7 +165,9 @@ async fn run_backup(
         }
     };
 
-    let dest_config = host_config.get_destination(&dest_name).unwrap();
+    let dest_config = host_config
+        .get_destination(&dest_name)
+        .ok_or_else(|| anyhow::anyhow!("Destination '{}' not found", dest_name))?;
     println!(
         "🎯 Destination: {} ({})",
         dest_name, dest_config.rclone_remote
@@ -213,42 +210,45 @@ async fn run_backup(
         result.bytes_transferred as f64 / 1024.0 / 1024.0
     );
 
-    if !result.errors.is_empty() {
+    let backup_failed = !result.errors.is_empty();
+
+    if backup_failed {
         println!("⚠️  Errors encountered:");
         for error in &result.errors {
             println!("  - {}", error);
         }
-    }
-
-    // Verify integrity
-    if host_config
-        .security
-        .as_ref()
-        .is_none_or(|s| s.verify_integrity)
-    {
-        println!("🔍 Verifying backup integrity...");
-        // Note: For now we'll skip detailed verification and trust rclone's checksum verification
-        println!("✅ Backup integrity verified");
-    }
-
-    // Offer to delete source files
-    let should_delete = if auto {
-        false // Don't delete in auto mode for safety
+        println!("❌ Backup completed with errors - skipping file deletion for safety");
     } else {
-        dialoguer::Confirm::new()
-            .with_prompt("Delete source files from removable media?")
-            .default(false)
-            .interact()?
-    };
+        // Verify integrity
+        if host_config
+            .security
+            .as_ref()
+            .is_none_or(|s| s.verify_integrity)
+        {
+            println!("🔍 Verifying backup integrity...");
+            // Note: For now we'll skip detailed verification and trust rclone's checksum verification
+            println!("✅ Backup integrity verified");
+        }
 
-    if should_delete {
-        let deleted = file_processor
-            .confirm_and_delete_source(selected_media, &result, &host_config)
-            .await?;
-        if deleted {
-            println!("🗑️  Source files deleted successfully");
+        // Offer to delete source files only if backup succeeded
+        let should_delete = if auto {
+            false // Don't delete in auto mode for safety
         } else {
-            println!("🛑 Source file deletion cancelled or failed");
+            dialoguer::Confirm::new()
+                .with_prompt("Delete source files from removable media?")
+                .default(false)
+                .interact()?
+        };
+
+        if should_delete {
+            let deleted = file_processor
+                .confirm_and_delete_source(selected_media, &result, &host_config)
+                .await?;
+            if deleted {
+                println!("🗑️  Source files deleted successfully");
+            } else {
+                println!("🛑 Source file deletion cancelled or failed");
+            }
         }
     }
 

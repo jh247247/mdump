@@ -24,10 +24,6 @@ struct HashCache {
 #[derive(Debug, Clone)]
 struct HashEntry {
     file_path: PathBuf,
-    #[allow(dead_code)]
-    read_size: u64,
-    #[allow(dead_code)]
-    hash: String,
 }
 
 impl HashCache {
@@ -46,15 +42,8 @@ impl HashCache {
         None
     }
 
-    fn insert(&mut self, hash: String, file_path: PathBuf, read_size: u64) {
-        self.hashes.insert(
-            hash.clone(),
-            HashEntry {
-                file_path,
-                read_size,
-                hash,
-            },
-        );
+    fn insert(&mut self, hash: String, file_path: PathBuf) {
+        self.hashes.insert(hash, HashEntry { file_path });
     }
 }
 
@@ -194,7 +183,7 @@ impl TemplateProcessor {
                 if current_size >= max_size {
                     println!("   Maximum read size reached, accepting collision");
                     let mut cache = hash_cache.lock().unwrap();
-                    cache.insert(hash_str.clone(), file_path.to_path_buf(), current_size);
+                    cache.insert(hash_str.clone(), file_path.to_path_buf());
                     return Ok(hash_str);
                 }
 
@@ -212,7 +201,7 @@ impl TemplateProcessor {
             // No collision, store the hash and return
             {
                 let mut cache = hash_cache.lock().unwrap();
-                cache.insert(hash_str.clone(), file_path.to_path_buf(), current_size);
+                cache.insert(hash_str.clone(), file_path.to_path_buf());
             }
 
             if current_size > initial_size {
@@ -347,6 +336,25 @@ impl TemplateProcessor {
         Ok(result)
     }
 
+    pub fn process_simple_template(&self, template: &str) -> Result<String> {
+        let mut result = template.to_string();
+
+        // Replace file-specific variables first (they take precedence over global ones)
+        for (key, value) in &self.file_variables {
+            let placeholder = format!("{{{}}}", key);
+            result = result.replace(&placeholder, value);
+        }
+
+        // Replace global variables for any remaining placeholders
+        for (key, value) in &self.variables {
+            let placeholder = format!("{{{}}}", key);
+            result = result.replace(&placeholder, value);
+        }
+
+        // Don't sanitize for hooks since they're not filesystem paths
+        Ok(result)
+    }
+
     pub fn process_directory_template(&self, template: &str) -> Result<PathBuf> {
         let processed = self.process_template(template)?;
         Ok(PathBuf::from(processed))
@@ -419,6 +427,7 @@ mod tests {
                 exclude_patterns: vec![],
                 deletion: None,
                 validation: None,
+                post_processing: None,
             },
         };
 

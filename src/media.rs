@@ -4,6 +4,15 @@ use std::path::{Path, PathBuf};
 use tokio::fs;
 use walkdir::WalkDir;
 
+pub(crate) fn glob_pattern_matches(file_name: &str, pattern: &str) -> crate::Result<bool> {
+    let regex_pattern = pattern
+        .replace(".", r"\.")
+        .replace("*", ".*")
+        .replace("?", ".");
+    let regex = regex::Regex::new(&format!("^{}$", regex_pattern))?;
+    Ok(regex.is_match(file_name))
+}
+
 pub struct MediaDetector;
 
 impl Default for MediaDetector {
@@ -194,14 +203,7 @@ impl MediaDetector {
     }
 
     fn matches_pattern(&self, file_name: &str, pattern: &str) -> Result<bool> {
-        // Simple glob pattern matching - convert to regex
-        let regex_pattern = pattern
-            .replace(".", r"\.")
-            .replace("*", ".*")
-            .replace("?", ".");
-
-        let regex = regex::Regex::new(&format!("^{}$", regex_pattern))?;
-        Ok(regex.is_match(file_name))
+        glob_pattern_matches(file_name, pattern)
     }
 }
 
@@ -221,6 +223,7 @@ mod tests {
                 exclude_patterns: vec!["*.bak".to_string(), "*.tmp".to_string()],
                 deletion: None,
                 validation: None,
+                post_processing: None,
             },
         }
     }

@@ -1,4 +1,5 @@
 pub mod config;
+pub mod hooks;
 pub mod media;
 pub mod operations;
 pub mod rclone;

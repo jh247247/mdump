@@ -17,6 +17,7 @@ pub struct MediaSource {
     pub exclude_patterns: Vec<String>,
     pub deletion: Option<DeletionConfig>,
     pub validation: Option<ValidationConfig>,
+    pub post_processing: Option<PostProcessingConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -50,9 +51,28 @@ pub struct CustomValidationCommand {
     pub name: String,
     pub command: String, // Command to execute, with {file_path} placeholder
     pub args: Vec<String>, // Additional arguments, can contain {file_path} placeholder
-    pub file_patterns: Vec<String>, // File patterns to validate, e.g., ["*.jpg", "*.png"] 
+    pub file_patterns: Vec<String>, // File patterns to validate, e.g., ["*.jpg", "*.png"]
     pub expected_exit_code: i32, // Expected exit code for success (usually 0)
     pub timeout_seconds: Option<u64>, // Per-command timeout
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PostProcessingConfig {
+    pub enabled: bool,
+    pub hooks: Vec<PostProcessingHook>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PostProcessingHook {
+    pub name: String,
+    pub command: String, // Command to execute
+    pub args: Vec<String>, // Command arguments with template variable support
+    pub working_directory: Option<String>, // Working directory for the command (supports templates)
+    pub timeout_seconds: Option<u64>, // Command timeout
+    pub run_on_success: bool, // Run hook only if backup was successful
+    pub run_on_failure: bool, // Run hook only if backup failed
+    pub environment: Option<std::collections::HashMap<String, String>>, // Environment variables (supports templates)
+    pub continue_on_error: bool, // Whether to continue processing other hooks if this one fails
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -29,26 +29,19 @@ impl MediaValidator {
             return true; // No patterns means match all files
         }
 
-        let file_name = file_path.file_name()
+        let file_name = file_path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("");
 
         patterns.iter().any(|pattern| {
-            // Convert glob pattern to regex-like matching
-            let pattern = pattern.replace("*", ".*").to_lowercase();
-            let file_name_lower = file_name.to_lowercase();
-            
-            // Simple pattern matching - could use a proper glob library
-            if pattern.starts_with("*.") {
-                let extension = &pattern[2..];
-                file_name_lower.ends_with(&format!(".{}", extension))
-            } else {
-                // Use regex for more complex patterns
-                match regex::Regex::new(&pattern) {
-                    Ok(re) => re.is_match(&file_name_lower),
-                    Err(_) => false,
-                }
-            }
+            // Lowercase both sides for case-insensitive matching, then delegate to the
+            // shared glob helper which correctly escapes dots before expanding wildcards.
+            crate::media::glob_pattern_matches(
+                &file_name.to_lowercase(),
+                &pattern.to_lowercase(),
+            )
+            .unwrap_or_default()
         })
     }
 

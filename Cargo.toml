@@ -2,8 +2,10 @@
 name = "mdump"
 version = "0.1.0"
 edition = "2021"
-authors = ["Jack"]
+authors = ["jh247247"]
 description = "A configurable media backup tool using rclone"
+license = "MIT"
+repository = "https://github.com/jh247247/mdump"
 
 [dependencies]
 clap = { version = "4.0", features = ["derive"] }

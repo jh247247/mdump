@@ -262,6 +262,7 @@ fn test_template_variable_workflow() -> mdump::Result<()> {
             exclude_patterns: vec![],
             deletion: None,
             validation: None,
+            post_processing: None,
         },
     };
 
