@@ -16,7 +16,7 @@ enabled = true
 [[source.pre_processing.commands]]
 name = "join_dji_segments"
 command = "dji-joiner"
-args = ["-i", "{input_dir}", "-o", "{output_dir}", "--disable-frame-analysis", "--copy-unjoined"]
+args = ["-i", "{input_dir}", "-o", "{output_dir}", "--disable-frame-analysis", "--link-unjoined"]
 file_patterns = ["*.MP4"]
 timeout_seconds = 1800
 copy_input = false  # Read directly from SD card (djijoiner is read-only)
