@@ -1,0 +1,36 @@
+# DJI Osmo Pocket 3 source configuration
+# Place this file as mdump_source.toml on the root of the SD card
+
+[source]
+name = "DJI Osmo Pocket 3"
+description = "DJI Osmo Pocket 3 media"
+paths = ["DCIM/DJI_001"]
+file_filters = ["*.MP4", "*.LRF"]
+exclude_patterns = ["._*"]
+
+# Join split video segments before backup
+# Requires dji-joiner: https://github.com/jh247247/djijoiner
+[source.pre_processing]
+enabled = true
+
+[[source.pre_processing.commands]]
+name = "join_dji_segments"
+command = "dji-joiner"
+args = ["-i", "{input_dir}", "-o", "{output_dir}", "--disable-frame-analysis"]
+file_patterns = ["*.MP4"]
+timeout_seconds = 1800
+
+# Validate video files before backup
+[source.validation]
+enabled = true
+skip_on_validation_failure = true
+
+[source.validation.ffprobe_validation]
+enabled = true
+file_patterns = ["*.MP4"]
+required_streams = ["video"]
+check_corruption = false
+
+[source.deletion]
+delete_imported_files = false
+extra_file_patterns = []
