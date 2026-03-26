@@ -427,6 +427,7 @@ mod tests {
                 exclude_patterns: vec![],
                 deletion: None,
                 validation: None,
+                pre_processing: None,
                 post_processing: None,
             },
         };

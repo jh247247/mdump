@@ -17,6 +17,7 @@ pub struct MediaSource {
     pub exclude_patterns: Vec<String>,
     pub deletion: Option<DeletionConfig>,
     pub validation: Option<ValidationConfig>,
+    pub pre_processing: Option<PreProcessingConfig>,
     pub post_processing: Option<PostProcessingConfig>,
 }
 
@@ -73,6 +74,21 @@ pub struct PostProcessingHook {
     pub run_on_failure: bool, // Run hook only if backup failed
     pub environment: Option<std::collections::HashMap<String, String>>, // Environment variables (supports templates)
     pub continue_on_error: bool, // Whether to continue processing other hooks if this one fails
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreProcessingConfig {
+    pub enabled: bool,
+    pub commands: Vec<PreProcessingCommand>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PreProcessingCommand {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub file_patterns: Vec<String>,
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -349,6 +365,43 @@ extra_file_patterns = ["*.log"]
         assert_eq!(dest_names.len(), 2);
         assert!(dest_names.contains(&&"dest1".to_string()));
         assert!(dest_names.contains(&&"dest2".to_string()));
+    }
+
+    #[test]
+    fn test_pre_processing_config_loading() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config_path = temp_dir.path().join("media_config.toml");
+
+        let config_content = r#"
+[source]
+name = "Test Camera"
+description = "Test"
+paths = ["DCIM/"]
+file_filters = ["*.MP4"]
+exclude_patterns = []
+
+[source.pre_processing]
+enabled = true
+
+[[source.pre_processing.commands]]
+name = "join_dji"
+command = "dji-joiner"
+args = ["-i", "{input_dir}", "-o", "{output_dir}", "--disable-frame-analysis"]
+file_patterns = ["*.MP4", "*.mp4"]
+timeout_seconds = 600
+"#;
+
+        std::fs::write(&config_path, config_content)?;
+        let config = MediaConfig::load(&config_path)?;
+
+        let pre = config.source.pre_processing.unwrap();
+        assert!(pre.enabled);
+        assert_eq!(pre.commands.len(), 1);
+        assert_eq!(pre.commands[0].name, "join_dji");
+        assert_eq!(pre.commands[0].command, "dji-joiner");
+        assert_eq!(pre.commands[0].file_patterns, vec!["*.MP4", "*.mp4"]);
+
+        Ok(())
     }
 
     #[test]

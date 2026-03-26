@@ -223,6 +223,7 @@ mod tests {
                 exclude_patterns: vec!["*.bak".to_string(), "*.tmp".to_string()],
                 deletion: None,
                 validation: None,
+                pre_processing: None,
                 post_processing: None,
             },
         }
