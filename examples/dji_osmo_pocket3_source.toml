@@ -19,6 +19,7 @@ command = "dji-joiner"
 args = ["-i", "{input_dir}", "-o", "{output_dir}", "--disable-frame-analysis"]
 file_patterns = ["*.MP4"]
 timeout_seconds = 1800
+copy_input = false  # Read directly from SD card (djijoiner is read-only)
 
 # Validate video files before backup
 [source.validation]

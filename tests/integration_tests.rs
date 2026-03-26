@@ -417,6 +417,7 @@ async fn test_djijoiner_pre_processing_end_to_end() {
             ],
             file_patterns: vec!["*.MP4".to_string()],
             timeout_seconds: Some(30),
+            copy_input: false,
         }],
     };
 

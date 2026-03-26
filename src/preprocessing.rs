@@ -121,56 +121,65 @@ impl PreProcessor {
             });
         }
 
-        // Create a temporary staging directory with input/ and output/ subdirs.
+        // Create a temporary staging directory for output (and optionally input).
         let staging_dir = tempfile::Builder::new()
             .prefix("mdump_preprocess_")
             .tempdir()?;
-
-        let input_dir = staging_dir.path().join("input");
         let output_dir = staging_dir.path().join("output");
-        std::fs::create_dir_all(&input_dir)?;
         std::fs::create_dir_all(&output_dir)?;
 
-        // Copy matched files into the input directory, preserving modification times
-        // so that template date variables reflect the original file dates.
-        println!("📋 Staging {} files for pre-processing...", matched_files.len());
-        for source_file in &matched_files {
-            let file_name = source_file
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
+        // Determine {input_dir}: either copy files to staging or read from source directly.
+        let input_dir = if command_config.copy_input {
+            let input_dir = staging_dir.path().join("input");
+            std::fs::create_dir_all(&input_dir)?;
 
-            let dest_path = input_dir.join(file_name);
-
-            // Handle filename collisions by prefixing the immediate parent directory name.
-            let final_dest = if dest_path.exists() {
-                let parent_name = source_file
-                    .parent()
-                    .and_then(|p| p.file_name())
+            println!("📋 Staging {} files for pre-processing...", matched_files.len());
+            for source_file in &matched_files {
+                let file_name = source_file
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                input_dir.join(format!("{}_{}", parent_name, file_name))
-            } else {
-                dest_path
-            };
 
-            std::fs::copy(source_file, &final_dest)?;
+                let dest_path = input_dir.join(file_name);
 
-            // Preserve original modification time.
-            if let Ok(src_meta) = std::fs::metadata(source_file) {
-                if let Ok(mtime) = src_meta.modified() {
-                    let ft = filetime::FileTime::from_system_time(mtime);
-                    // Non-fatal: if we can't set the mtime, just warn.
-                    if let Err(e) = filetime::set_file_mtime(&final_dest, ft) {
-                        eprintln!(
-                            "Warning: could not preserve mtime for {}: {}",
-                            final_dest.display(),
-                            e
-                        );
+                // Handle filename collisions by prefixing the immediate parent directory name.
+                let final_dest = if dest_path.exists() {
+                    let parent_name = source_file
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown");
+                    input_dir.join(format!("{}_{}", parent_name, file_name))
+                } else {
+                    dest_path
+                };
+
+                std::fs::copy(source_file, &final_dest)?;
+
+                // Preserve original modification time.
+                if let Ok(src_meta) = std::fs::metadata(source_file) {
+                    if let Ok(mtime) = src_meta.modified() {
+                        let ft = filetime::FileTime::from_system_time(mtime);
+                        if let Err(e) = filetime::set_file_mtime(&final_dest, ft) {
+                            eprintln!(
+                                "Warning: could not preserve mtime for {}: {}",
+                                final_dest.display(),
+                                e
+                            );
+                        }
                     }
                 }
             }
-        }
+            input_dir
+        } else {
+            // Read directly from the source — find the common parent of matched files.
+            let source_dir = matched_files[0]
+                .parent()
+                .unwrap_or(Path::new("."))
+                .to_path_buf();
+            println!("📂 Reading directly from source: {}", source_dir.display());
+            source_dir
+        };
 
         println!("🚀 Running pre-processing command '{}'...", command_config.name);
 
@@ -294,6 +303,7 @@ mod tests {
             args: args.iter().map(|s| s.to_string()).collect(),
             file_patterns: patterns.iter().map(|s| s.to_string()).collect(),
             timeout_seconds: Some(30),
+            copy_input: true,
         }
     }
 

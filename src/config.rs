@@ -90,6 +90,15 @@ pub struct PreProcessingCommand {
     pub args: Vec<String>,
     pub file_patterns: Vec<String>,
     pub timeout_seconds: Option<u64>,
+    /// If false, {input_dir} points directly at the source directory on the media
+    /// instead of copying files to a staging dir first. Useful for large files
+    /// when the command only reads from input (e.g., djijoiner). Default: true.
+    #[serde(default = "default_true")]
+    pub copy_input: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
