@@ -5,7 +5,7 @@
 name = "DJI Osmo Pocket 3"
 description = "DJI Osmo Pocket 3 media"
 paths = ["DCIM/DJI_001"]
-file_filters = ["*.MP4", "*.LRF"]
+file_filters = ["*.MP4"]
 exclude_patterns = ["._*"]
 
 # Join split video segments before backup
