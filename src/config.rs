@@ -31,6 +31,7 @@ pub struct DeletionConfig {
 pub struct ValidationConfig {
     pub enabled: bool,
     pub ffprobe_validation: Option<FfprobeConfig>,
+    #[serde(default)]
     pub custom_commands: Vec<CustomValidationCommand>,
     pub skip_on_validation_failure: bool, // If true, skip invalid files; if false, fail the entire operation
     pub max_validation_time_seconds: Option<u64>, // Timeout for validation commands
