@@ -330,3 +330,113 @@ fn test_template_variable_workflow() -> mdump::Result<()> {
 
     Ok(())
 }
+
+/// Integration test for pre-processing config parsing
+#[tokio::test]
+async fn test_pre_processing_config_parsing() {
+    use tempfile::TempDir;
+
+    let media_dir = TempDir::new().unwrap();
+    let config_content = r#"
+[source]
+name = "Test Camera"
+description = "Test"
+paths = ["DCIM/"]
+file_filters = ["*.MP4", "*.jpg"]
+exclude_patterns = []
+
+[source.pre_processing]
+enabled = true
+
+[[source.pre_processing.commands]]
+name = "copy_videos"
+command = "cp"
+args = ["-r", "{input_dir}/.", "{output_dir}/"]
+file_patterns = ["*.MP4"]
+timeout_seconds = 10
+"#;
+
+    let config_path = media_dir.path().join("mdump_source.toml");
+    std::fs::write(&config_path, config_content).unwrap();
+
+    let config = mdump::MediaConfig::load(&config_path).unwrap();
+    let pre = config.source.pre_processing.unwrap();
+    assert!(pre.enabled);
+    assert_eq!(pre.commands[0].name, "copy_videos");
+    assert_eq!(pre.commands[0].file_patterns, vec!["*.MP4"]);
+}
+
+/// End-to-end test for dji-joiner pre-processing (requires external binaries)
+#[tokio::test]
+#[ignore] // Requires ffmpeg, exiftool, and dji-joiner binaries
+async fn test_djijoiner_pre_processing_end_to_end() {
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    let test_dir = TempDir::new().unwrap();
+    let dcim = test_dir.path().join("DCIM/DJI_001");
+    std::fs::create_dir_all(&dcim).unwrap();
+
+    // Create two synthetic DJI split videos with sequential timestamps
+    for (ts, name) in &[
+        ("2026-03-26T10:00:00.000000Z", "DJI_20260326100000_0001_D.MP4"),
+        ("2026-03-26T10:00:05.000000Z", "DJI_20260326100005_0002_D.MP4"),
+    ] {
+        let path = dcim.join(name);
+        let status = Command::new("ffmpeg")
+            .args(["-f", "lavfi", "-i", "testsrc=duration=5:size=320x240:rate=30",
+                     "-f", "lavfi", "-i", "sine=frequency=440:duration=5",
+                     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                     "-c:a", "aac", "-b:a", "128k",
+                     "-metadata", &format!("creation_time={}", ts),
+                     &path.to_string_lossy(), "-y"])
+            .output()
+            .expect("ffmpeg required for this test");
+        assert!(status.status.success(), "ffmpeg failed to create test video");
+
+        let status = Command::new("exiftool")
+            .args(["-overwrite_original", "-encoder=DJI OsmoPocket3",
+                     &path.to_string_lossy()])
+            .output()
+            .expect("exiftool required for this test");
+        assert!(status.status.success(), "exiftool failed to set metadata");
+    }
+
+    // Run dji-joiner via PreProcessor
+    let config = mdump::config::PreProcessingConfig {
+        enabled: true,
+        commands: vec![mdump::config::PreProcessingCommand {
+            name: "join_dji".to_string(),
+            command: dirs::home_dir().unwrap()
+                .join("Projects/djijoiner/target/release/dji-joiner")
+                .to_string_lossy().to_string(),
+            args: vec![
+                "-i".to_string(), "{input_dir}".to_string(),
+                "-o".to_string(), "{output_dir}".to_string(),
+                "--disable-frame-analysis".to_string(),
+            ],
+            file_patterns: vec!["*.MP4".to_string()],
+            timeout_seconds: Some(30),
+        }],
+    };
+
+    let input_files: Vec<_> = std::fs::read_dir(&dcim).unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().map_or(false, |ext| ext == "MP4"))
+        .collect();
+    assert_eq!(input_files.len(), 2);
+
+    let result = mdump::preprocessing::PreProcessor::run(&config, &input_files, false)
+        .await
+        .unwrap();
+
+    assert!(result.was_processed);
+    assert_eq!(result.files_to_backup.len(), 1,
+               "Expected 1 joined file, got: {:?}", result.files_to_backup);
+    assert_eq!(result.original_source_files.len(), 2);
+
+    let output_name = result.files_to_backup[0].file_name().unwrap().to_string_lossy();
+    assert!(output_name.starts_with("DJI_Recording_"),
+            "Unexpected output name: {}", output_name);
+}
