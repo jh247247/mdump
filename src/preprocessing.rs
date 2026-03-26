@@ -101,14 +101,17 @@ impl PreProcessor {
             });
         }
 
+        println!(
+            "🔄 Pre-processing '{}': {} of {} files match patterns",
+            command_config.name,
+            matched_files.len(),
+            files.len()
+        );
+
         if dry_run {
-            println!(
-                "Pre-processing (dry run): would run '{}' on {} file(s):",
-                command_config.name,
-                matched_files.len()
-            );
+            println!("🔍 DRY RUN: would run '{}' on:", command_config.name);
             for f in &matched_files {
-                println!("  {}", f.display());
+                println!("   - {}", f.file_name().unwrap_or_default().to_string_lossy());
             }
             return Ok(PreProcessingResult {
                 files_to_backup: files.to_vec(),
@@ -130,6 +133,7 @@ impl PreProcessor {
 
         // Copy matched files into the input directory, preserving modification times
         // so that template date variables reflect the original file dates.
+        println!("📋 Staging {} files for pre-processing...", matched_files.len());
         for source_file in &matched_files {
             let file_name = source_file
                 .file_name()
@@ -167,6 +171,8 @@ impl PreProcessor {
                 }
             }
         }
+
+        println!("🚀 Running pre-processing command '{}'...", command_config.name);
 
         // Build command args with {input_dir} and {output_dir} substitution.
         let input_dir_str = input_dir.to_string_lossy();
@@ -210,11 +216,9 @@ impl PreProcessor {
         // Print stdout if non-empty (command progress / informational output).
         let stdout = String::from_utf8_lossy(&output.stdout);
         if !stdout.trim().is_empty() {
-            println!(
-                "Pre-processing '{}' output:\n{}",
-                command_config.name,
-                stdout.trim()
-            );
+            for line in stdout.trim().lines() {
+                println!("   {}", line);
+            }
         }
 
         if !output.status.success() {
@@ -230,6 +234,16 @@ impl PreProcessor {
         // Collect all files produced in the output directory.
         let mut output_files = Vec::new();
         Self::collect_output_files(&output_dir, &mut output_files)?;
+
+        println!(
+            "✅ Pre-processing complete: {} output files (from {} inputs, {} pass-through)",
+            output_files.len(),
+            matched_files.len(),
+            pass_through_files.len()
+        );
+        for f in &output_files {
+            println!("   → {}", f.file_name().unwrap_or_default().to_string_lossy());
+        }
 
         // Combine output files with files that were not subject to pre-processing.
         let mut files_to_backup = output_files;
