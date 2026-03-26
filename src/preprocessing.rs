@@ -254,49 +254,13 @@ impl PreProcessor {
             println!("   → {}", f.file_name().unwrap_or_default().to_string_lossy());
         }
 
-        // Determine which matched source files were NOT consumed by the command.
-        // If copy_input=false, the command reads from source directly — any source file
-        // whose name doesn't appear in the output was not processed and should pass through.
-        let mut consumed_source_files = Vec::new();
-        let mut unconsumed_source_files = Vec::new();
-
-        if !command_config.copy_input {
-            let output_names: std::collections::HashSet<String> = output_files.iter()
-                .filter_map(|p| p.file_name())
-                .map(|n| n.to_string_lossy().to_lowercase())
-                .collect();
-
-            for source in &matched_files {
-                let name = source.file_name()
-                    .map(|n| n.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-
-                if output_names.contains(&name) {
-                    // Command copied this file to output — use the output version
-                    consumed_source_files.push(source.clone());
-                } else {
-                    // Command didn't produce this file — pass through the original
-                    unconsumed_source_files.push(source.clone());
-                }
-            }
-
-            if !unconsumed_source_files.is_empty() {
-                println!("📂 {} source files passed through unchanged",
-                         unconsumed_source_files.len());
-            }
-        } else {
-            // With copy_input=true, all matched files were staged — treat all as consumed
-            consumed_source_files = matched_files.clone();
-        }
-
-        // Combine: command output + unconsumed source originals + pattern-unmatched pass-throughs
+        // Combine output files with files that were not subject to pre-processing.
         let mut files_to_backup = output_files;
-        files_to_backup.extend_from_slice(&unconsumed_source_files);
         files_to_backup.extend_from_slice(&pass_through_files);
 
         Ok(PreProcessingResult {
             files_to_backup,
-            original_source_files: consumed_source_files,
+            original_source_files: matched_files,
             staging_dir: Some(staging_dir),
             was_processed: true,
         })
