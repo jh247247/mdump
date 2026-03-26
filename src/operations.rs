@@ -1,5 +1,6 @@
 use crate::config::{Destination, DetectedMedia, HostConfig};
 use crate::hooks::HookExecutor;
+use crate::preprocessing::PreProcessor;
 use crate::rclone::RcloneWrapper;
 use crate::templates::TemplateProcessor;
 use crate::validation::{MediaValidator, ValidationResult};
@@ -180,8 +181,33 @@ impl FileProcessor {
 
         println!("📊 Found {} files to process", files_to_process.len());
 
+        // Pre-process files if configured (e.g., join DJI split videos)
+        let pre_processing_result = if let Some(pre_config) = &media.config.source.pre_processing {
+            match PreProcessor::run(pre_config, &files_to_process, self.dry_run).await {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    println!("❌ Pre-processing failed: {}", e);
+                    println!("   Continuing with original files");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Use pre-processed files if available, otherwise use originals
+        let files_for_validation = if let Some(ref pp) = pre_processing_result {
+            if pp.was_processed {
+                pp.files_to_backup.clone()
+            } else {
+                files_to_process.clone()
+            }
+        } else {
+            files_to_process.clone()
+        };
+
         // Validate files if validation is configured
-        let (validated_files, validation_results, invalid_files) = self.validate_files(&files_to_process, media).await?;
+        let (validated_files, validation_results, invalid_files) = self.validate_files(&files_for_validation, media).await?;
 
         if validated_files.is_empty() {
             println!("⚠️  No valid files remaining after validation");
@@ -189,17 +215,17 @@ impl FileProcessor {
                 files_processed: 0,
                 bytes_transferred: 0,
                 errors: vec!["No valid files remaining after validation".to_string()],
-                skipped_files: files_to_process.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+                skipped_files: files_for_validation.iter().map(|p| p.to_string_lossy().to_string()).collect(),
                 successfully_imported_files: Vec::new(),
                 validation_results,
                 invalid_files,
             });
         }
 
-        if validated_files.len() != files_to_process.len() {
-            println!("📊 {} files passed validation ({} invalid files filtered out)", 
-                validated_files.len(), 
-                files_to_process.len() - validated_files.len()
+        if validated_files.len() != files_for_validation.len() {
+            println!("📊 {} files passed validation ({} invalid files filtered out)",
+                validated_files.len(),
+                files_for_validation.len() - validated_files.len()
             );
         }
 
@@ -226,6 +252,17 @@ impl FileProcessor {
         // Include validation results
         result.validation_results = validation_results;
         result.invalid_files = invalid_files;
+
+        // Fix successfully_imported_files for pre-processed media:
+        // Replace staging paths with original source paths for deletion tracking
+        if let Some(ref pp) = pre_processing_result {
+            if pp.was_processed && !pp.original_source_files.is_empty() {
+                // Clear staging paths that process_files added
+                result.successfully_imported_files.clear();
+                // Add the original source files (SD card paths) for deletion tracking
+                result.successfully_imported_files.extend(pp.original_source_files.clone());
+            }
+        }
 
         // Save backup log if files were successfully processed
         if result.files_processed > 0 && !result.successfully_imported_files.is_empty() {
