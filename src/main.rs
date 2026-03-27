@@ -230,8 +230,11 @@ async fn run_backup(
             println!("✅ Backup integrity verified");
         }
 
-        // Offer to delete source files only if backup succeeded
-        let should_delete = if auto {
+        // Offer to delete source files only if backup succeeded with no errors
+        let should_delete = if !result.errors.is_empty() {
+            println!("⚠️  Skipping deletion prompt — backup had {} error(s)", result.errors.len());
+            false
+        } else if auto {
             false // Don't delete in auto mode for safety
         } else {
             dialoguer::Confirm::new()
