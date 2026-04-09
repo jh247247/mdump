@@ -151,8 +151,10 @@ impl RcloneWrapper {
         // Add global configuration options
         if let Some(global_config) = &self.global_config {
             if let Some(bandwidth_limit) = &global_config.bandwidth_limit {
-                args.push("--bwlimit".to_string());
-                args.push(bandwidth_limit.clone());
+                if !bandwidth_limit.is_empty() {
+                    args.push("--bwlimit".to_string());
+                    args.push(bandwidth_limit.clone());
+                }
             }
 
             // Use configured transfers if specified, otherwise use optimal calculated value
