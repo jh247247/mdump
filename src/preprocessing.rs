@@ -181,7 +181,23 @@ impl PreProcessor {
             source_dir
         };
 
-        println!("🚀 Running pre-processing command '{}'...", command_config.name);
+        // Calculate dynamic timeout based on total input size.
+        // Configured timeout_seconds is the minimum; we scale up for large datasets.
+        // Assume ~50 MB/s throughput from SD card (conservative for USB 3.0).
+        let total_input_bytes: u64 = matched_files.iter()
+            .filter_map(|f| std::fs::metadata(f).ok())
+            .map(|m| m.len())
+            .sum();
+        let min_timeout = command_config.timeout_seconds.unwrap_or(300);
+        let size_based_timeout = (total_input_bytes / (50 * 1024 * 1024)) + 120;
+        let timeout_seconds = std::cmp::max(min_timeout, size_based_timeout);
+        let timeout_duration = Duration::from_secs(timeout_seconds);
+
+        let total_gb = total_input_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+        println!(
+            "🚀 Running pre-processing command '{}' ({:.1} GB input, timeout {}m)...",
+            command_config.name, total_gb, timeout_seconds / 60
+        );
 
         // Build command args with {input_dir} and {output_dir} substitution.
         let input_dir_str = input_dir.to_string_lossy();
@@ -196,15 +212,13 @@ impl PreProcessor {
             })
             .collect();
 
-        // Execute the command with piped stdio so we can capture output.
+        // Execute with stdout inherited (shows live progress) and stderr piped (for error capture).
         let mut cmd = Command::new(&command_config.command);
         cmd.args(&processed_args)
-            .stdout(Stdio::piped())
+            .stdout(Stdio::inherit())
             .stderr(Stdio::piped());
 
-        let timeout_duration = Duration::from_secs(command_config.timeout_seconds.unwrap_or(300));
-
-        let output = match tokio::time::timeout(timeout_duration, cmd.output()).await {
+        let child_result = match tokio::time::timeout(timeout_duration, cmd.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 bail!(
@@ -215,27 +229,20 @@ impl PreProcessor {
             }
             Err(_) => {
                 bail!(
-                    "Pre-processing command '{}' timed out after {}s",
+                    "Pre-processing command '{}' timed out after {}m ({:.1} GB input)",
                     command_config.name,
-                    timeout_duration.as_secs()
+                    timeout_seconds / 60,
+                    total_gb
                 );
             }
         };
 
-        // Print stdout if non-empty (command progress / informational output).
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        if !stdout.trim().is_empty() {
-            for line in stdout.trim().lines() {
-                println!("   {}", line);
-            }
-        }
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
+        if !child_result.status.success() {
+            let stderr = String::from_utf8_lossy(&child_result.stderr);
             bail!(
                 "Pre-processing command '{}' failed (exit code {}): {}",
                 command_config.name,
-                output.status.code().unwrap_or(-1),
+                child_result.status.code().unwrap_or(-1),
                 stderr.trim()
             );
         }
