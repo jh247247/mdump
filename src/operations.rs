@@ -10,7 +10,6 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -62,90 +61,7 @@ impl FileProcessor {
     pub fn new(host_config: &HostConfig, dry_run: bool) -> Self {
         let rclone = RcloneWrapper::new(host_config.rclone.clone());
 
-        // Clean up any existing temporary directories from previous runs
-        Self::cleanup_temp_directories();
-
-        // Clean up partial files from destinations
-        Self::cleanup_partial_files(host_config);
-
         Self { rclone, dry_run }
-    }
-
-    fn cleanup_temp_directories() {
-        let temp_dir = std::env::temp_dir();
-
-        if let Ok(entries) = std::fs::read_dir(&temp_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                    if name.starts_with("mdump_") && path.is_dir() {
-                        // Force removal of directory and all contents including symlinks
-                        if let Err(e) = Self::force_remove_dir_all(&path) {
-                            eprintln!(
-                                "Warning: Could not clean up old temp directory {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn force_remove_dir_all(path: &Path) -> Result<()> {
-        if path.is_dir() {
-            for entry in std::fs::read_dir(path)? {
-                let entry = entry?;
-                let entry_path = entry.path();
-                if entry_path.is_dir() {
-                    Self::force_remove_dir_all(&entry_path)?;
-                } else {
-                    // Remove file or symlink
-                    std::fs::remove_file(&entry_path)?;
-                }
-            }
-            std::fs::remove_dir(path)?;
-        }
-        Ok(())
-    }
-
-    fn cleanup_partial_files(host_config: &HostConfig) {
-        for destination in host_config.destinations.values() {
-            let dest_path = Path::new(&destination.path);
-            if dest_path.exists() {
-                if let Err(e) = Self::remove_partial_files_recursive(dest_path) {
-                    eprintln!(
-                        "Warning: Could not clean up partial files in {}: {}",
-                        dest_path.display(),
-                        e
-                    );
-                }
-            }
-        }
-    }
-
-    fn remove_partial_files_recursive(path: &Path) -> Result<()> {
-        if path.is_dir() {
-            for entry in std::fs::read_dir(path)? {
-                let entry = entry?;
-                let entry_path = entry.path();
-                if entry_path.is_dir() {
-                    Self::remove_partial_files_recursive(&entry_path)?;
-                } else if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                    if name.ends_with(".partial") {
-                        if let Err(e) = std::fs::remove_file(&entry_path) {
-                            eprintln!(
-                                "Warning: Could not remove partial file {}: {}",
-                                entry_path.display(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     pub async fn process_media(
@@ -246,6 +162,10 @@ impl FileProcessor {
             .process_files(
                 &file_mappings,
                 destination,
+                host_config
+                    .security
+                    .as_ref()
+                    .is_none_or(|s| s.verify_integrity),
             )
             .await?;
 
@@ -256,7 +176,7 @@ impl FileProcessor {
         // Fix successfully_imported_files for pre-processed media:
         // Replace staging paths with original source paths for deletion tracking
         if let Some(ref pp) = pre_processing_result {
-            if pp.was_processed && !pp.original_source_files.is_empty() {
+            if result.errors.is_empty() && pp.was_processed && !pp.original_source_files.is_empty() {
                 // Clear staging paths that process_files added
                 result.successfully_imported_files.clear();
                 // Add the original source files (SD card paths) for deletion tracking
@@ -265,7 +185,10 @@ impl FileProcessor {
         }
 
         // Save backup log if files were successfully processed
-        if result.files_processed > 0 && !result.successfully_imported_files.is_empty() {
+        if result.errors.is_empty()
+            && result.files_processed > 0
+            && !result.successfully_imported_files.is_empty()
+        {
             if let Err(e) = self.save_backup_log(media, &destination.path, &file_mappings) {
                 println!("⚠️  Warning: Could not save backup log: {}", e);
             }
@@ -447,14 +370,11 @@ impl FileProcessor {
         );
         println!();
 
-        let mut total_size = 0u64;
+        let total_size = file_mappings.iter().try_fold(0u64, |total, mapping| {
+            std::fs::metadata(&mapping.source_path).map(|metadata| total + metadata.len())
+        })?;
 
         for (i, mapping) in file_mappings.iter().enumerate() {
-            let file_size = std::fs::metadata(&mapping.source_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-            total_size += file_size;
-
             println!(
                 "{}. {} -> {}",
                 i + 1,
@@ -491,6 +411,7 @@ impl FileProcessor {
         &self,
         file_mappings: &[FileMapping],
         destination: &Destination,
+        verify_integrity: bool,
     ) -> Result<ProcessingResult> {
         let mut result = ProcessingResult {
             files_processed: 0,
@@ -524,8 +445,8 @@ impl FileProcessor {
         println!();
 
         // Create a temporary directory structure that mirrors our desired layout
-        let temp_dir = std::env::temp_dir().join(format!("mdump_{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_dir)?;
+        let staging = tempfile::Builder::new().prefix("mdump_").tempdir()?;
+        let temp_dir = staging.path();
 
         // Create symbolic links in the temp directory to match our desired structure
         println!("🔗 Creating temporary symbolic link structure...");
@@ -565,15 +486,30 @@ impl FileProcessor {
         // Now copy the entire temp directory structure with a single rclone call
         match self
             .rclone
-            .copy_with_progress(&temp_dir, &destination.path, destination)
+            .copy_with_progress(temp_dir, &destination.path, destination)
             .await
         {
             Ok(copy_result) => {
-                result.files_processed = file_mappings.len() as u64;
-                result.bytes_transferred = copy_result.bytes_transferred;
                 result.errors = copy_result.errors;
 
-                if copy_result.success {
+                if copy_result.success && verify_integrity {
+                    println!("🔍 Verifying backup integrity...");
+                    match self
+                        .rclone
+                        .check_integrity(temp_dir, &destination.path, destination)
+                        .await
+                    {
+                        Ok(true) => println!("✅ Backup integrity verified"),
+                        Ok(false) => result.errors.push("Backup integrity check failed".to_string()),
+                        Err(e) => result.errors.push(format!("Backup integrity check failed: {}", e)),
+                    }
+                }
+
+                if copy_result.success && result.errors.is_empty() {
+                    result.files_processed = file_mappings.len() as u64;
+                    result.bytes_transferred = file_mappings.iter().try_fold(0u64, |total, mapping| {
+                        std::fs::metadata(&mapping.source_path).map(|metadata| total + metadata.len())
+                    })?;
                     println!("✅ Bulk copy completed successfully!");
                     // Record all source files as successfully imported
                     for mapping in file_mappings {
@@ -596,7 +532,7 @@ impl FileProcessor {
         }
 
         // Clean up temporary directory
-        if let Err(e) = std::fs::remove_dir_all(&temp_dir) {
+        if let Err(e) = staging.close() {
             println!("⚠️  Warning: Could not clean up temporary directory: {}", e);
         }
 
@@ -1324,6 +1260,70 @@ mod tests {
                 directory_structure: "{yyyy}/{mm}".to_string(),
             },
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_rclone_backup_and_failure() -> Result<()> {
+        let temp = TempDir::new()?;
+        let source = temp.path().join("source.txt");
+        std::fs::write(&source, "original")?;
+        let target = temp.path().join("backup");
+        let mut destination = create_test_destination();
+        destination.rclone_remote = ":local".to_string();
+        destination.path = target.to_string_lossy().into_owned();
+        let mappings = vec![FileMapping {
+            source_path: source.clone(),
+            destination_path: target.join("renamed.txt").to_string_lossy().into_owned(),
+            relative_source_path: "source.txt".to_string(),
+            processed_filename: "renamed.txt".to_string(),
+        }];
+        let processor = FileProcessor {
+            rclone: RcloneWrapper::new(Some(crate::config::RcloneGlobalConfig {
+                bandwidth_limit: None,
+                transfers: Some(1),
+                additional_flags: vec!["--retries=1".to_string()],
+            })),
+            dry_run: false,
+        };
+        let result = processor.process_files(&mappings, &destination, true).await?;
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.files_processed, 1);
+        assert_eq!(result.bytes_transferred, 8);
+        assert_eq!(result.successfully_imported_files, vec![source.clone()]);
+        assert_eq!(std::fs::read(target.join("renamed.txt"))?, b"original");
+
+        let staged = temp.path().join("staged");
+        std::fs::create_dir(&staged)?;
+        symlink(&source, staged.join("renamed.txt"))?;
+        std::fs::write(target.join("renamed.txt"), "tampered")?;
+        assert!(!processor
+            .rclone
+            .check_integrity(&staged, &destination.path, &destination)
+            .await?);
+
+        // A file cannot be used as a destination directory.
+        std::fs::remove_dir_all(&target)?;
+        std::fs::write(&target, "blocked")?;
+        let failed = processor.process_files(&mappings, &destination, true).await?;
+        assert!(!failed.errors.is_empty());
+        assert_eq!(failed.files_processed, 0);
+        assert!(failed.successfully_imported_files.is_empty());
+        assert_eq!(std::fs::read(&source)?, b"original");
+
+        let preview_mappings: Vec<_> = (0..12)
+            .map(|_| FileMapping {
+                source_path: source.clone(),
+                destination_path: mappings[0].destination_path.clone(),
+                relative_source_path: "source.txt".to_string(),
+                processed_filename: "renamed.txt".to_string(),
+            })
+            .collect();
+        let preview = processor
+            .dry_run_preview(&preview_mappings, &destination)
+            .await?;
+        assert_eq!(preview.bytes_transferred, 96);
+        Ok(())
     }
 
     #[test]

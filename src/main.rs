@@ -198,6 +198,13 @@ async fn run_backup(
         return Ok(());
     }
 
+    if !result.errors.is_empty() {
+        anyhow::bail!(
+            "Backup failed; source files retained: {}",
+            result.errors.join("; ")
+        );
+    }
+
     if result.files_processed == 0 {
         println!("⚠️  No files were processed");
         return Ok(());
@@ -206,52 +213,25 @@ async fn run_backup(
     println!("📊 Backup completed:");
     println!("  Files processed: {}", result.files_processed);
     println!(
-        "  Bytes transferred: {:.2} MB",
+        "  Bytes backed up: {:.2} MB",
         result.bytes_transferred as f64 / 1024.0 / 1024.0
     );
 
-    let backup_failed = !result.errors.is_empty();
+    // Auto mode never deletes source files.
+    let should_delete = !auto
+        && dialoguer::Confirm::new()
+            .with_prompt("Delete source files from removable media?")
+            .default(false)
+            .interact()?;
 
-    if backup_failed {
-        println!("⚠️  Errors encountered:");
-        for error in &result.errors {
-            println!("  - {}", error);
-        }
-        println!("❌ Backup completed with errors - skipping file deletion for safety");
-    } else {
-        // Verify integrity
-        if host_config
-            .security
-            .as_ref()
-            .is_none_or(|s| s.verify_integrity)
-        {
-            println!("🔍 Verifying backup integrity...");
-            // Note: For now we'll skip detailed verification and trust rclone's checksum verification
-            println!("✅ Backup integrity verified");
-        }
-
-        // Offer to delete source files only if backup succeeded with no errors
-        let should_delete = if !result.errors.is_empty() {
-            println!("⚠️  Skipping deletion prompt — backup had {} error(s)", result.errors.len());
-            false
-        } else if auto {
-            false // Don't delete in auto mode for safety
+    if should_delete {
+        let deleted = file_processor
+            .confirm_and_delete_source(selected_media, &result, &host_config)
+            .await?;
+        if deleted {
+            println!("🗑️  Source files deleted successfully");
         } else {
-            dialoguer::Confirm::new()
-                .with_prompt("Delete source files from removable media?")
-                .default(false)
-                .interact()?
-        };
-
-        if should_delete {
-            let deleted = file_processor
-                .confirm_and_delete_source(selected_media, &result, &host_config)
-                .await?;
-            if deleted {
-                println!("🗑️  Source files deleted successfully");
-            } else {
-                println!("🛑 Source file deletion cancelled or failed");
-            }
+            println!("🛑 Source file deletion cancelled or failed");
         }
     }
 

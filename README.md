@@ -36,6 +36,9 @@ The binary will be available at `target/release/mdump`.
 
 Create `~/.config/mdump/host_config.toml` (or specify with `--config`):
 
+On macOS, the default is `~/Library/Application Support/mdump/host_config.toml`.
+The command prints the configuration path it loads.
+
 ```toml
 [destinations.photos]
 path = "imported_photos"

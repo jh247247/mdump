@@ -214,7 +214,14 @@ impl RcloneWrapper {
             success: exit_status.success(),
             files_transferred: 1,
             bytes_transferred: 0,
-            errors: Vec::new(),
+            errors: if exit_status.success() {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "rclone copy failed with exit code {}",
+                    exit_status.exit_code()
+                )]
+            },
         })
     }
 
@@ -228,7 +235,8 @@ impl RcloneWrapper {
         cmd.arg("check")
             .arg(source)
             .arg(format!("{}:{}", dest_config.rclone_remote, destination))
-            .arg("--one-way");
+            .arg("--one-way")
+            .arg("--copy-links");
 
         // Add global flags if available
         if let Some(global_config) = &self.global_config {
@@ -237,8 +245,8 @@ impl RcloneWrapper {
             }
         }
 
-        let output = cmd.output().await?;
-        Ok(output.status.success())
+        let status = cmd.status().await?;
+        Ok(status.success())
     }
 
     pub async fn delete_files(&self, remote_path: &str, dest_config: &Destination) -> Result<bool> {
