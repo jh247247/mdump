@@ -26,7 +26,6 @@ futures = "0.3"
 num_cpus = "1.16"
 portable-pty = "0.8"
 tempfile = "3.8"
-filetime = "0.2"
 
 [dev-dependencies]
 

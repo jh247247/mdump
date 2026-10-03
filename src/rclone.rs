@@ -1,5 +1,9 @@
 use crate::config::{Destination, RcloneGlobalConfig};
 use crate::Result;
+#[cfg(target_vendor = "apple")]
+use anyhow::Context;
+#[cfg(target_vendor = "apple")]
+use std::os::darwin::fs::FileTimesExt;
 use portable_pty::{CommandBuilder, PtySize};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -127,6 +131,7 @@ impl RcloneWrapper {
             "--progress".to_string(),
             "--stats=1s".to_string(),
             "--copy-links".to_string(),
+            "--metadata".to_string(),
         ];
 
         // Analyze source files to determine optimal transfer settings
@@ -209,6 +214,10 @@ impl RcloneWrapper {
         }
 
         let exit_status = child.wait()?;
+        #[cfg(target_vendor = "apple")]
+        if exit_status.success() {
+            self.preserve_local_timestamps(source, destination, dest_config).await?;
+        }
 
         Ok(CopyResult {
             success: exit_status.success(),
@@ -223,6 +232,47 @@ impl RcloneWrapper {
                 )]
             },
         })
+    }
+    #[cfg(target_vendor = "apple")]
+    async fn preserve_local_timestamps(
+        &self,
+        source: &Path,
+        destination: &str,
+        dest_config: &Destination,
+    ) -> Result<()> {
+        // rclone transfers btime metadata but cannot set macOS birth times.
+        let mut command = Command::new("rclone");
+        command.args(["backend", "features"])
+            .arg(format!("{}:{}", dest_config.rclone_remote, destination));
+        if let Some(config) = &self.global_config {
+            command.args(&config.additional_flags);
+        }
+        let output = command.output().await?;
+        anyhow::ensure!(output.status.success(), "Could not inspect destination backend: {}",
+            String::from_utf8_lossy(&output.stderr));
+        let backend: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        if backend["Features"]["IsLocal"].as_bool() != Some(true) {
+            return Ok(());
+        }
+        let root = Path::new(backend["Root"].as_str().context("Missing local backend root")?);
+        let source_root = if source.is_file() {
+            source.parent().context("Missing source parent")?
+        } else {
+            source
+        };
+        for entry in walkdir::WalkDir::new(source).follow_links(true) {
+            let entry = entry?;
+            if entry.file_type().is_file() {
+                let metadata = std::fs::metadata(entry.path())?;
+                let times = std::fs::FileTimes::new()
+                    .set_modified(metadata.modified()?)
+                    .set_created(metadata.created()?);
+                let target = root.join(entry.path().strip_prefix(source_root)?);
+                std::fs::File::open(&target)?.set_times(times)
+                    .with_context(|| format!("Could not preserve timestamps for {}", target.display()))?;
+            }
+        }
+        Ok(())
     }
 
     pub async fn check_integrity(

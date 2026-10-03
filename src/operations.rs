@@ -1268,6 +1268,16 @@ mod tests {
         let temp = TempDir::new()?;
         let source = temp.path().join("source.txt");
         std::fs::write(&source, "original")?;
+        let modified = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        let times = std::fs::FileTimes::new().set_modified(modified);
+        #[cfg(target_vendor = "apple")]
+        use std::os::darwin::fs::FileTimesExt;
+        #[cfg(windows)]
+        use std::os::windows::fs::FileTimesExt;
+        #[cfg(any(target_vendor = "apple", windows))]
+        let times = times.set_created(modified - std::time::Duration::from_secs(3600));
+        std::fs::File::options().write(true).open(&source)?.set_times(times)?;
+        let original = std::fs::metadata(&source)?;
         let target = temp.path().join("backup");
         let mut destination = create_test_destination();
         destination.rclone_remote = ":local".to_string();
@@ -1292,6 +1302,10 @@ mod tests {
         assert_eq!(result.bytes_transferred, 8);
         assert_eq!(result.successfully_imported_files, vec![source.clone()]);
         assert_eq!(std::fs::read(target.join("renamed.txt"))?, b"original");
+        let copied = std::fs::metadata(target.join("renamed.txt"))?;
+        assert_eq!(copied.modified()?, original.modified()?);
+        #[cfg(any(target_vendor = "apple", windows))]
+        assert_eq!(copied.created()?, original.created()?);
 
         let staged = temp.path().join("staged");
         std::fs::create_dir(&staged)?;

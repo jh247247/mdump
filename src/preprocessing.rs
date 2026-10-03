@@ -1,6 +1,10 @@
 use crate::config::PreProcessingConfig;
 use crate::Result;
-use anyhow::bail;
+use anyhow::{bail, Context};
+#[cfg(target_vendor = "apple")]
+use std::os::darwin::fs::FileTimesExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileTimesExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -156,19 +160,16 @@ impl PreProcessor {
 
                 std::fs::copy(source_file, &final_dest)?;
 
-                // Preserve original modification time.
-                if let Ok(src_meta) = std::fs::metadata(source_file) {
-                    if let Ok(mtime) = src_meta.modified() {
-                        let ft = filetime::FileTime::from_system_time(mtime);
-                        if let Err(e) = filetime::set_file_mtime(&final_dest, ft) {
-                            eprintln!(
-                                "Warning: could not preserve mtime for {}: {}",
-                                final_dest.display(),
-                                e
-                            );
-                        }
-                    }
-                }
+                let metadata = std::fs::metadata(source_file)?;
+                let times = std::fs::FileTimes::new().set_modified(metadata.modified()?);
+                #[cfg(any(target_vendor = "apple", windows))]
+                let times = times.set_created(metadata.created()?);
+                #[cfg(unix)]
+                let file = std::fs::File::open(&final_dest)?;
+                #[cfg(not(unix))]
+                let file = std::fs::File::options().write(true).open(&final_dest)?;
+                file.set_times(times)
+                    .with_context(|| format!("Could not preserve timestamps for {}", final_dest.display()))?;
             }
             input_dir
         } else {
@@ -414,19 +415,29 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     #[tokio::test]
-    async fn test_run_with_cp_command() -> Result<()> {
+    async fn test_run_preserves_staged_input_timestamps() -> Result<()> {
         let dir = TempDir::new()?;
         let f = create_file(dir.path(), "clip.mp4");
+        let modified = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+        let times = std::fs::FileTimes::new().set_modified(modified);
+        #[cfg(any(target_vendor = "apple", windows))]
+        let times = times.set_created(modified - Duration::from_secs(3600));
+        std::fs::File::options().write(true).open(&f)?.set_times(times)?;
+        let original = std::fs::metadata(&f)?;
+        let mut permissions = original.permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&f, permissions)?;
         let files = vec![f];
 
-        // cp -r {input_dir}/. {output_dir}/ copies everything from input to output.
+        // Model a joiner's unjoined-file output: a symlink to its staged input.
         let config = make_config(
             true,
             vec![make_command(
-                "copy_files",
-                "cp",
-                vec!["-r", "{input_dir}/.", "{output_dir}/"],
+                "link_unjoined",
+                "ln",
+                vec!["-s", "{input_dir}/clip.mp4", "{output_dir}/clip.mp4"],
                 vec!["*.mp4"],
             )],
         );
@@ -434,13 +445,16 @@ mod tests {
         let result = PreProcessor::run(&config, &files, false).await?;
 
         assert!(result.was_processed);
-        assert!(!result.files_to_backup.is_empty(), "output dir should have files");
-        // The staged output should contain the copied mp4.
-        let has_mp4 = result
-            .files_to_backup
-            .iter()
-            .any(|p| p.extension().and_then(|e| e.to_str()) == Some("mp4"));
-        assert!(has_mp4, "output files should include the copied mp4");
+        let output = result.files_to_backup.iter()
+            .find(|p| p.file_name().unwrap() == "clip.mp4").unwrap();
+        assert_eq!(std::fs::read(output)?, b"fake content");
+        let staged_input = result.staging_dir.as_ref().unwrap().path().join("input/clip.mp4");
+        for path in [&staged_input, output] {
+            let metadata = std::fs::metadata(path)?;
+            assert_eq!(metadata.modified()?, original.modified()?);
+            #[cfg(any(target_vendor = "apple", windows))]
+            assert_eq!(metadata.created()?, original.created()?, "{}", path.display());
+        }
 
         Ok(())
     }

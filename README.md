@@ -10,6 +10,7 @@ A Rust CLI tool that provides automated backup of removable media using rclone, 
 - **Automatic Remote Setup**: Configures missing rclone remotes interactively
 - **High Performance**: CPU-based parallel transfers with direct rclone output
 - **File Processing Options**: Folder flattening, hash-based renaming
+- **Timestamp Preservation**: Keeps source modification dates and transfers creation-date metadata; macOS local destinations also restore creation dates with native filesystem APIs
 - **Safety Features**: Integrity verification, confirmed deletion, dry-run mode
 - **Cross-Platform**: Works on macOS, Linux, and Windows
 
@@ -92,6 +93,10 @@ exclude_patterns = [".DS_Store", "Thumbs.db"]
 - `{hostname}` - Current hostname
 - `{uuid}` - Random UUID
 - `{original_path}` - Original relative path from media
+
+File date variables use the source filesystem creation date, falling back to modification time when creation dates are unavailable. Pre-processing input copies retain modification dates and, on macOS/Windows, creation dates. Custom pre-processing commands must preserve or set the recording dates of their outputs; `djijoiner` sets joined outputs to the first segment's recording time.
+
+Backups use rclone's `--metadata`. Remote creation-date support depends on the backend; modification dates remain preserved where supported. For local destinations on macOS (including mounted network filesystems that support creation dates), mdump explicitly restores creation and modification dates because rclone cannot set macOS birth times. Embedded media metadata is unchanged by backup.
 
 ## Usage
 
